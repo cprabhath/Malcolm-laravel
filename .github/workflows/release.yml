@@ -1,99 +1,125 @@
 name: Tag & Release
 
 on:
-  workflow_dispatch:
-    inputs:
-      version:
-        description: "Semver without v prefix (e.g. 1.0.0)"
-        required: true
-        default: "1.0.0"
-      notes_suffix:
-        description: "Release notes suffix (e.g. 1.0.0-GA)"
-        required: false
-        default: ""
+    push:
+        paths:
+            - 'docs/RELEASE-NOTES-*.md'
+    workflow_dispatch:
+        inputs:
+            version:
+                description: "Semver without v prefix (e.g. 1.0.0)"
+                required: true
+                default: "1.0.0"
+            notes_suffix:
+                description: "Release notes suffix (e.g. 1.0.0-GA)"
+                required: false
+                default: ""
 
 permissions:
-  contents: write
+    contents: write
 
 jobs:
-  release:
-    name: Create tag and GitHub release
-    runs-on: ubuntu-latest
+    release:
+        name: Create tag and GitHub release
+        runs-on: ubuntu-latest
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
+        steps:
+            - name: Checkout repository
+              uses: actions/checkout@v4
+              with:
+                  fetch-depth: 0
 
-      - name: Resolve version, tag, and release notes file
-        id: vars
-        shell: bash
-        run: |
-          VERSION="${{ github.event.inputs.version }}"
-          NOTES_SUFFIX="${{ github.event.inputs.notes_suffix }}"
+            - name: Get changed release notes files
+              id: changed-files
+              uses: tj-actions/changed-files@v41
+              with:
+                  files: docs/RELEASE-NOTES-*.md
 
-          if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
-            echo "Invalid version format: $VERSION (expected x.y.z)"
-            exit 1
-          fi
+            - name: Resolve version, tag, and release notes file
+              id: vars
+              shell: bash
+              run: |
+                  if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+                      VERSION="${{ github.event.inputs.version }}"
+                      NOTES_SUFFIX="${{ github.event.inputs.notes_suffix }}"
+                  else
+                      # For push trigger, parse from changed file
+                      CHANGED_FILES="${{ steps.changed-files.outputs.all_changed_files }}"
+                      if [[ -z "$CHANGED_FILES" ]]; then
+                        echo "No release notes files changed"
+                        exit 1
+                      fi
+                      # Take the first changed file
+                      NOTES_FILE=$(echo "$CHANGED_FILES" | head -n1)
+                      # Extract version and suffix from filename
+                      # Filename format: RELEASE-NOTES-{version}[-{suffix}].md
+                      BASENAME=$(basename "$NOTES_FILE" .md)
+                      if [[ "$BASENAME" =~ RELEASE-NOTES-(.+)-(.+) ]]; then
+                        VERSION="${BASH_REMATCH[1]}"
+                        NOTES_SUFFIX="${BASH_REMATCH[2]}"
+                      elif [[ "$BASENAME" =~ RELEASE-NOTES-(.+) ]]; then
+                        VERSION="${BASH_REMATCH[1]}"
+                        NOTES_SUFFIX=""
+                      else
+                        echo "Invalid release notes filename: $BASENAME"
+                        exit 1
+                      fi
+                  fi
 
-          if [[ -n "$NOTES_SUFFIX" ]]; then
-            NOTES_FILE="docs/RELEASE-NOTES-${NOTES_SUFFIX}.md"
-          else
-            # Try both naming patterns
-            if [[ -f "docs/RELEASE-NOTES-${VERSION}.md" ]]; then
-              NOTES_FILE="docs/RELEASE-NOTES-${VERSION}.md"
-            elif [[ -f "docs/RELEASE-NOTES-${VERSION}-GA.md" ]]; then
-              NOTES_FILE="docs/RELEASE-NOTES-${VERSION}-GA.md"
-            else
-              NOTES_FILE="docs/RELEASE-NOTES-${VERSION}.md"
-            fi
-          fi
+                  if [[ ! "$VERSION" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+                    echo "Invalid version format: $VERSION (expected x.y.z)"
+                    exit 1
+                  fi
 
-          TAG="v$VERSION"
+                  if [[ -n "$NOTES_SUFFIX" ]]; then
+                    NOTES_FILE="docs/RELEASE-NOTES-${VERSION}-${NOTES_SUFFIX}.md"
+                  else
+                    NOTES_FILE="docs/RELEASE-NOTES-${VERSION}.md"
+                  fi
 
-          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
-          echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
+                  TAG="v$VERSION"
 
-          echo "Using tag: $TAG"
-          echo "Using release notes: $NOTES_FILE"
-          echo "Release notes file exists: $(test -f "$NOTES_FILE" && echo 'YES' || echo 'NO')"
+                  echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+                  echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+                  echo "notes_file=$NOTES_FILE" >> "$GITHUB_OUTPUT"
 
-      - name: Configure git identity
-        run: |
-          git config user.name "github-actions[bot]"
-          git config user.email "github-actions[bot]@users.noreply.github.com"
+                  echo "Using tag: $TAG"
+                  echo "Using release notes: $NOTES_FILE"
+                  echo "Release notes file exists: $(test -f "$NOTES_FILE" && echo 'YES' || echo 'NO')"
 
-      - name: Create and push tag if missing
-        shell: bash
-        run: |
-          TAG="${{ steps.vars.outputs.tag }}"
-          if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
-            echo "Tag $TAG already exists on origin"
-          else
-            git tag -a "$TAG" -m "Release $TAG"
-            git push origin "$TAG"
-            echo "Created and pushed $TAG"
-          fi
+            - name: Configure git identity
+              run: |
+                  git config user.name "github-actions[bot]"
+                  git config user.email "github-actions[bot]@users.noreply.github.com"
 
-      - name: Validate release notes file
-        run: |
-          test -f "${{ steps.vars.outputs.notes_file }}" || {
-            echo "${{ steps.vars.outputs.notes_file }} not found"
-            exit 1
-          }
+            - name: Create and push tag if missing
+              shell: bash
+              run: |
+                  TAG="${{ steps.vars.outputs.tag }}"
+                  if git ls-remote --tags origin "refs/tags/$TAG" | grep -q "$TAG"; then
+                    echo "Tag $TAG already exists on origin"
+                  else
+                    git tag -a "$TAG" -m "Release $TAG"
+                    git push origin "$TAG"
+                    echo "Created and pushed $TAG"
+                  fi
 
-      - name: Create or update GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.vars.outputs.tag }}
-          name: Site Release ${{ steps.vars.outputs.tag }}
-          body_path: ${{ steps.vars.outputs.notes_file }}
-          draft: false
-          prerelease: false
-          generate_release_notes: false
-          make_latest: true
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+            - name: Validate release notes file
+              run: |
+                  test -f "${{ steps.vars.outputs.notes_file }}" || {
+                    echo "${{ steps.vars.outputs.notes_file }} not found"
+                    exit 1
+                  }
+
+            - name: Create or update GitHub Release
+              uses: softprops/action-gh-release@v2
+              with:
+                  tag_name: ${{ steps.vars.outputs.tag }}
+                  name: Site Release ${{ steps.vars.outputs.tag }}
+                  body_path: ${{ steps.vars.outputs.notes_file }}
+                  draft: false
+                  prerelease: false
+                  generate_release_notes: false
+                  make_latest: true
+              env:
+                  GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
