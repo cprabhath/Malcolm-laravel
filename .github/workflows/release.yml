@@ -41,7 +41,14 @@ jobs:
           if [[ -n "$NOTES_SUFFIX" ]]; then
             NOTES_FILE="docs/RELEASE-NOTES-${NOTES_SUFFIX}.md"
           else
-            NOTES_FILE="docs/RELEASE-NOTES-${VERSION}.md"
+            # Try both naming patterns
+            if [[ -f "docs/RELEASE-NOTES-${VERSION}.md" ]]; then
+              NOTES_FILE="docs/RELEASE-NOTES-${VERSION}.md"
+            elif [[ -f "docs/RELEASE-NOTES-${VERSION}-GA.md" ]]; then
+              NOTES_FILE="docs/RELEASE-NOTES-${VERSION}-GA.md"
+            else
+              NOTES_FILE="docs/RELEASE-NOTES-${VERSION}.md"
+            fi
           fi
 
           TAG="v$VERSION"
@@ -52,6 +59,7 @@ jobs:
 
           echo "Using tag: $TAG"
           echo "Using release notes: $NOTES_FILE"
+          echo "Release notes file exists: $(test -f "$NOTES_FILE" && echo 'YES' || echo 'NO')"
 
       - name: Configure git identity
         run: |
